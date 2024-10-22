@@ -1,50 +1,66 @@
-function onFormSubmit() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  var lastRow = sheet.getLastRow();
-  
-  // Part 1: Format Date of Birth in Column K
-  var dobCell = sheet.getRange(lastRow, 11); // Column K is index 11
-  var cellValue = dobCell.getValue();
-  
-  if (cellValue) {
-    var date = new Date(cellValue);
-    if (!isNaN(date.getTime())) {
-      var day = ('0' + date.getDate()).slice(-2);
-      var month = ('0' + (date.getMonth() + 1)).slice(-2);
-      var year = date.getFullYear();
-      var formattedDate = day + '-' + month + '-' + year;
-      dobCell.setValue(formattedDate); // Set the corrected date in column K
+function onFormSubmit(e) {
+  try {
+    Logger.log("Form submission triggered");
+    
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("form response (Sept)");
+    if (!sheet) {
+      throw new Error("Sheet 'form response (Sept)' not found");
     }
+    
+    var lastRow = sheet.getLastRow();
+    Logger.log("Processing row: " + lastRow);
+    
+    // Part 1: Date of Birth Formatting
+    var dobCell = sheet.getRange(lastRow, 11);
+    var cellValue = dobCell.getValue();
+    Logger.log("Original DOB value: " + cellValue);
+    
+    if (cellValue) {
+      var date = new Date(cellValue);
+      if (!isNaN(date.getTime())) {
+        var day = ('0' + date.getDate()).slice(-2);
+        var month = ('0' + (date.getMonth() + 1)).slice(-2);
+        var year = date.getFullYear();
+        var formattedDate = day + '-' + month + '-' + year;
+        dobCell.setValue(formattedDate);
+        Logger.log("Formatted DOB: " + formattedDate);
+      } else {
+        Logger.log("Invalid date format received");
+      }
+    }
+    
+    // Part 2: Default Values
+    var defaultValues = [
+      { column: 10, value: "Female", field: "Gender" },
+      { column: 12, value: "Domestic", field: "Type" },
+      { column: 13, value: "GURGAON", field: "Location" },
+      { column: 14, value: "Aadhaar Card", field: "ID Type" },
+      { column: 16, value: "Agent", field: "Role" },
+      { column: 17, value: "OPERATIONS", field: "Department" }
+    ];
+    
+    defaultValues.forEach(function(def) {
+      var cell = sheet.getRange(lastRow, def.column);
+      var currentValue = cell.getValue();
+      Logger.log(`Checking ${def.field} in column ${def.column}: Current value = "${currentValue}"`);
+      
+      if (currentValue === "" || currentValue === null || currentValue === undefined) {
+        cell.setValue(def.value);
+        Logger.log(`Set default value for ${def.field}: ${def.value}`);
+      }
+    });
+    
+    SpreadsheetApp.flush(); // Force the spreadsheet to update immediately
+    Logger.log("Form processing completed successfully");
+    
+  } catch (error) {
+    Logger.log("Error in onFormSubmit: " + error.toString());
+    throw error; // Re-throw the error so it's visible in the Apps Script dashboard
   }
+}
 
-  // Part 2: Fill Default Values for Specific Columns
-  // Column J for Gender (index 10)
-  var genderCell = sheet.getRange(lastRow, 10);
-  if (genderCell.getValue() === "") {
-    genderCell.setValue("Female");
-  }
-
-  // Columns L, M, N for "Domestic", "GURGAON", "Aadhaar Card" (indexes 12, 13, 14)
-  var colL = sheet.getRange(lastRow, 12);
-  var colM = sheet.getRange(lastRow, 13);
-  var colN = sheet.getRange(lastRow, 14);
-  if (colL.getValue() === "") {
-    colL.setValue("Domestic");
-  }
-  if (colM.getValue() === "") {
-    colM.setValue("GURGAON");
-  }
-  if (colN.getValue() === "") {
-    colN.setValue("Aadhaar Card");
-  }
-
-  // Columns P, Q for "Agent", "OPERATIONS" (indexes 16, 17)
-  var colP = sheet.getRange(lastRow, 16);
-  var colQ = sheet.getRange(lastRow, 17);
-  if (colP.getValue() === "") {
-    colP.setValue("Agent");
-  }
-  if (colQ.getValue() === "") {
-    colQ.setValue("OPERATIONS");
-  }
+// Optional: Add this function to test the script manually
+function testOnFormSubmit() {
+  onFormSubmit();
+  Logger.log("Test completed - check execution logs");
 }
