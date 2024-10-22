@@ -1,0 +1,228 @@
+/**
+ * @OnlyCurrentDoc
+ * @GoogleAppsScriptScope https://www.googleapis.com/auth/forms
+ */
+
+const RECIPIENT_COL = "Email Id";
+const EMAIL_SENT_COL = "Email Sent";
+const REG_NO_COL = "Reg No";
+const GRID_NO_COL = "Grid No";
+const ERROR_COL = "Error Log";
+const EMAIL_SUBJECT = "Your Application is Received and Under Review!";
+
+// Function to log errors both to sheet and Apps Script logger
+function logError(sheet, row, error) {
+  const heads = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const errorColIdx = heads.indexOf(ERROR_COL);
+  
+  const errorMessage = `${new Date()}: ${error}`;
+  Logger.log(errorMessage);
+  
+  if (errorColIdx !== -1) {
+    sheet.getRange(row, errorColIdx + 1).setValue(errorMessage);
+  }
+}
+
+// Function to get the last used numbers
+function getLastUsedNumbers() {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const data = sheet.getDataRange().getDisplayValues();
+    const heads = data[0];
+    
+    const regNoIdx = heads.indexOf(REG_NO_COL);
+    const gridNoIdx = heads.indexOf(GRID_NO_COL);
+    
+    if (regNoIdx === -1 || gridNoIdx === -1) {
+      throw new Error(`Required columns not found. Looking for: ${REG_NO_COL} and ${GRID_NO_COL}`);
+    }
+    
+    let lastRegNo = 17;  // Default to one less than start (18)
+    let lastGridNo = 1308;  // Default to one less than start (1309)
+    
+    // Look through existing entries to find the highest numbers
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][regNoIdx]) {
+        const currentRegNo = parseInt(data[i][regNoIdx].replace('TPGC', ''));
+        if (!isNaN(currentRegNo) && currentRegNo > lastRegNo) {
+          lastRegNo = currentRegNo;
+        }
+      }
+      
+      if (data[i][gridNoIdx]) {
+        const currentGridNo = parseInt(data[i][gridNoIdx].replace('A', ''));
+        if (!isNaN(currentGridNo) && currentGridNo > lastGridNo) {
+          lastGridNo = currentGridNo;
+        }
+      }
+    }
+    
+    Logger.log(`Last used numbers - Reg No: ${lastRegNo}, Grid No: ${lastGridNo}`);
+    return { lastRegNo, lastGridNo };
+  } catch (e) {
+    Logger.log(`Error in getLastUsedNumbers: ${e.toString()}`);
+    throw e;
+  }
+}
+
+/**
+ * Get Gmail draft template
+ * @param {string} subject_line - The subject line to search for in drafts
+ * @returns {Object} Template object containing message details and attachments
+ */
+function getGmailTemplate(subject_line) {
+  try {
+    Logger.log(`Looking for draft with subject: ${subject_line}`);
+    const drafts = GmailApp.getDrafts();
+    
+    // Find matching draft
+    const draft = drafts.find(draft => 
+      draft.getMessage().getSubject() === subject_line
+    );
+
+    if (!draft) {
+      throw new Error(`No draft found with subject: ${subject_line}`);
+    }
+
+    const msg = draft.getMessage();
+    const attachments = msg.getAttachments();
+    
+    return {
+      message: {
+        subject: subject_line,
+        text: msg.getPlainBody(),
+        html: msg.getBody()
+      },
+      attachments: attachments,
+      inlineImages: {}
+    };
+  } catch (e) {
+    Logger.log(`Error in getGmailTemplate: ${e.toString()}`);
+    throw new Error(`Failed to find Gmail draft: ${e.message}`);
+  }
+}
+
+/**
+ * Fill template with data
+ * @param {Object} template - Email template object
+ * @param {Object} data - Data to fill template with
+ * @returns {Object} Filled template
+ */
+function fillTemplate(template, data) {
+  try {
+    let template_string = JSON.stringify(template);
+    
+    // Replace all {{variables}} with their values from data
+    template_string = template_string.replace(/{{[^{}]+}}/g, key => {
+      const field = key.replace(/[{}]+/g, "");
+      return escapeData_(data[field] || "");
+    });
+    
+    return JSON.parse(template_string);
+  } catch (e) {
+    Logger.log(`Error in fillTemplate: ${e.toString()}`);
+    throw e;
+  }
+}
+
+// Escape special characters in data
+function escapeData_(str) {
+  if (str === null || str === undefined) {
+    return "";
+  }
+  return str.toString()
+    .replace(/[\\]/g, '\\\\')
+    .replace(/[\"]/g, '\\\"')
+    .replace(/[\/]/g, '\\/')
+    .replace(/[\b]/g, '\\b')
+    .replace(/[\f]/g, '\\f')
+    .replace(/[\n]/g, '\\n')
+    .replace(/[\r]/g, '\\r')
+    .replace(/[\t]/g, '\\t');
+}
+
+/**
+ * Main function to send emails and assign registration numbers
+ */
+function sendEmails(e) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  
+  try {
+    const dataRange = sheet.getDataRange();
+    const data = dataRange.getDisplayValues();
+    const heads = data[0];
+    
+    // Get column indices
+    const emailSentColIdx = heads.indexOf(EMAIL_SENT_COL);
+    const regNoColIdx = heads.indexOf(REG_NO_COL);
+    const gridNoColIdx = heads.indexOf(GRID_NO_COL);
+    const recipientColIdx = heads.indexOf(RECIPIENT_COL);
+    
+    // Verify all required columns exist
+    if (emailSentColIdx === -1 || regNoColIdx === -1 || 
+        gridNoColIdx === -1 || recipientColIdx === -1) {
+      throw new Error(`Missing required columns. Found indices: emailSent=${emailSentColIdx}, regNo=${regNoColIdx}, gridNo=${gridNoColIdx}, recipient=${recipientColIdx}`);
+    }
+    
+    const lastRow = sheet.getLastRow();
+    const currentRow = data[lastRow - 1];
+    
+    Logger.log(`Processing row ${lastRow}`);
+    
+    // Only process if email hasn't been sent and no Reg No assigned
+    if (currentRow[emailSentColIdx] === '' && currentRow[regNoColIdx] === '') {
+      // Get the last used numbers
+      const { lastRegNo, lastGridNo } = getLastUsedNumbers();
+      
+      // Generate new numbers
+      const newRegNo = `TPGC${lastRegNo + 1}`;
+      const newGridNo = `A${lastGridNo + 1}`;
+      
+      Logger.log(`Generated new numbers - Reg No: ${newRegNo}, Grid No: ${newGridNo}`);
+      
+      // Create object for email template
+      const rowData = {};
+      heads.forEach((head, idx) => {
+        rowData[head] = currentRow[idx] || '';
+      });
+      
+      // Add the new numbers to the object
+      rowData[REG_NO_COL] = newRegNo;
+      rowData[GRID_NO_COL] = newGridNo;
+      
+      // Update the sheet with new numbers
+      sheet.getRange(lastRow, regNoColIdx + 1).setValue(newRegNo);
+      sheet.getRange(lastRow, gridNoColIdx + 1).setValue(newGridNo);
+      
+      // Verify recipient email exists
+      if (!rowData[RECIPIENT_COL]) {
+        throw new Error('Recipient email address is missing');
+      }
+      
+      // Send email using the updated function names
+      const emailTemplate = getGmailTemplate(EMAIL_SUBJECT);
+      const msgObj = fillTemplate(emailTemplate.message, rowData);
+      
+      GmailApp.sendEmail(
+        rowData[RECIPIENT_COL], 
+        msgObj.subject, 
+        msgObj.text, 
+        {
+          htmlBody: msgObj.html,
+          attachments: emailTemplate.attachments,
+          inlineImages: emailTemplate.inlineImages
+        }
+      );
+      
+      // Mark email as sent
+      sheet.getRange(lastRow, emailSentColIdx + 1).setValue(new Date());
+      Logger.log('Email sent successfully');
+    } else {
+      Logger.log(`Skipping row ${lastRow} - Email already sent or Reg No already assigned`);
+    }
+  } catch (e) {
+    const errorMessage = `Error processing row ${sheet.getLastRow()}: ${e.toString()}`;
+    logError(sheet, sheet.getLastRow(), errorMessage);
+    throw e;
+  }
+}
